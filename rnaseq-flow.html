@@ -38,7 +38,11 @@
 
   "When the run finishes, this is what you get. The two HTML files I keep mentioning — multiqc_report and analysis_report — are your entry points. Then there's a directory per analysis stage. Per-contrast result CSVs from DESeq2 and edgeR carry gene_name and gene_biotype annotation so you can read them without an ID-mapping step. The RSeQC strandedness file per sample is worth knowing about — it's the auto-detected verdict that feeds featureCounts. And run_summary.html under pipeline_info is written automatically at the end of every run, success or failure — it has the resource usage per process and links to everything that was produced.",
 
-  "Quick note on what's new in version 1.1.0, released a couple of days ago. Differential splicing — the diffsplice flag I mentioned — is new. Batch and covariate modelling is new: a batch column is auto-detected and the design flag accepts any formula. Every DE result table now carries gene_name and gene_biotype columns. Per-contrast volcano plots are written for both DESeq2 and edgeR. DESeq2 log-fold-changes are now shrunk with apeglm for better effect-size estimates. And the Quarto report grew into a full analysis report — searchable tables, plotly volcanoes — plus an automatic run-summary page at the end of every run.",
+  "What's new in the latest release, 1.3.0 — this one is about Nextflow itself. Nextflow's strict language parser became the default in version 25.10, and it's what the built-in linter uses. It rejected several things the pipeline relied on, so on current Nextflow the pipeline simply wouldn't run — you'd have hit this on version 26. So we migrated the whole thing: the resource-ceiling helper became Nextflow's native resourceLimits, the run-completion summary moved into the workflow's onComplete section, top-level script statements moved into functions, and a handful of deprecated idioms were modernised — Channel with a capital C, implicit closure variables, a while loop. The pipeline now passes nextflow lint with zero errors and zero warnings, and I verified it end-to-end on 26.04 across the STAR, Salmon and download paths. The one thing to know: the minimum Nextflow is now 25.10. Nothing about the analysis changed — same processes, same resources, same outputs.",
+
+  "Before that, version 1.2.0. This was a reference-download release, and it fixes something important, so please listen to this bit if you've used the download_refs mode. Ensembl publishes several GTFs per species, and the old code picked the annotation by excluding the ones it recognised — which, because of the alphabetical ordering, always left the chr_patch_hapl_scaff file. That's a patch-and-haplotype annotation, and it does not describe the primary-assembly genome we download alongside it. On human release 116 that GTF spans five hundred and twenty-eight contigs against the genome's seventy. The GTF and the transcriptome are now chosen by the assembly named in the genome FASTA, and anything ambiguous is a hard error rather than a guess. If you built a reference set with an earlier version, re-download it. Two other fixes: Ensembl quietly removed the current_gtf directory, so 'current' downloads were finding no annotation at all — we now resolve 'current' to a concrete release number up front; and a failed download used to exit zero with a half-finished reference set, which now fails the run properly. On the new side, the download finally fetches the cDNA transcriptome, so download_refs can feed build_indices for Salmon and Kallisto — previously you had to go and get that file by hand. And one more fix outside the downloader: the HISAT2 index build used to ask for only 48 gigabytes, but a splice-aware human index needs around 200, so it was being killed by the out-of-memory reaper. It now sizes its memory request from the GTF — roughly 200 gigabytes for human, 9 for yeast — and if the machine can't provide that, it falls back to a non-splice-aware index instead of dying.",
+
+  "Briefly, the release before that — 1.1.0. Differential splicing — the diffsplice flag I mentioned — was added there. So was batch and covariate modelling: a batch column is auto-detected and the design flag accepts any formula. Every DE result table carries gene_name and gene_biotype columns. Per-contrast volcano plots are written for both DESeq2 and edgeR. DESeq2 log-fold-changes are shrunk with apeglm for better effect-size estimates. And the Quarto report grew into a full analysis report — searchable tables, plotly volcanoes — plus an automatic run-summary page at the end of every run.",
 
   "To wrap up — the quick start, four commands. One, validate the workflow without data using stub-run. Two, fetch references for your species, pinned to a specific Ensembl release. Three, build the index for your chosen aligner — or pass aligner=all to build all four. Four, run the analysis itself. Once it finishes, open results/multiqc/multiqc_report.html and you're in. That's rnaseq-flow. Happy to take questions."
 ]
@@ -1072,7 +1076,7 @@
       <span style="background: var(--route-salmon)"></span>
       <span style="background: var(--route-qc)"></span>
     </div>
-    <div>Version 1.1.0 &nbsp;·&nbsp; May 2026</div>
+    <div>Version 1.3.0 &nbsp;·&nbsp; July 2026</div>
   </div>
 </section>
 
@@ -1764,12 +1768,104 @@
 
 
 <!-- ============================================================
-  SLIDE 17 — WHAT'S NEW IN 1.1.0
+  SLIDE 17 — WHAT'S NEW IN 1.3.0
 ============================================================ -->
-<section data-label="14 What's new in 1.1.0">
+<section data-label="14 What's new in 1.3.0">
   <div class="frame">
     <p class="eyebrow">Release notes</p>
-    <h2 class="slide-title">What's new in 1.1.0</h2>
+    <h2 class="slide-title">What's new in 1.3.0</h2>
+    <div class="release-head" style="margin-top: 18px;">
+      <span class="release-tag">v1.3.0</span>
+      <span class="release-date">8 July 2026</span>
+    </div>
+    <div class="rule" style="margin-top: 6px;"></div>
+
+    <div class="changes">
+      <div class="change">
+        <h4>Nextflow 26 support</h4>
+        <p>Nextflow's strict language parser — the default from 25.10, and what <code>nextflow lint</code> uses — rejected several constructs, so the pipeline would not run on current Nextflow. The config and scripts are migrated; <code>nextflow lint</code> now reports zero errors and zero warnings, verified end-to-end on 26.04.</p>
+      </div>
+      <div class="change">
+        <h4>Minimum Nextflow is now 25.10</h4>
+        <p><code>resourceLimits</code>, the entry-workflow <code>onComplete:</code> section, and no top-level script statements all require the new parser. The floor rose from 22.10.1 to 25.10.0.</p>
+      </div>
+      <div class="change">
+        <h4>Resource ceilings via <code>resourceLimits</code></h4>
+        <p>The <code>check_max()</code> helper (a config function, now forbidden) is replaced by Nextflow's native <code>process.resourceLimits</code>. <code>--max_cpus</code>/<code>--max_memory</code>/<code>--max_time</code> cap requests exactly as before.</p>
+      </div>
+      <div class="change">
+        <h4>Run-summary as an <code>onComplete:</code> section</h4>
+        <p>The top-level <code>workflow.onComplete</code> handler moved into the entry workflow's <code>onComplete:</code> section; <code>run_summary.html</code> is still written on success and failure.</p>
+      </div>
+      <div class="change">
+        <h4>Deprecations cleared</h4>
+        <p><code>Channel.*</code> → <code>channel.*</code>, explicit closure parameters instead of implicit <code>it</code>, and a <code>while</code> loop replaced — no remaining lint warnings.</p>
+      </div>
+      <div class="change">
+        <h4>Behaviour unchanged</h4>
+        <p>Pure compatibility work: same processes, same resources, same analyses and outputs. Only the Nextflow version requirement and the syntax changed.</p>
+      </div>
+    </div>
+  </div>
+  <div class="pagemark"><span class="dot"></span>17 · What's new</div>
+</section>
+
+
+<!-- ============================================================
+  SLIDE 18 — PREVIOUS RELEASE 1.2.0
+============================================================ -->
+<section data-label="15 Previously — 1.2.0">
+  <div class="frame">
+    <p class="eyebrow">Release notes</p>
+    <h2 class="slide-title">Previously — 1.2.0</h2>
+    <div class="release-head" style="margin-top: 18px;">
+      <span class="release-tag">v1.2.0</span>
+      <span class="release-date">8 July 2026</span>
+    </div>
+    <div class="rule" style="margin-top: 6px;"></div>
+
+    <div class="changes">
+      <div class="change">
+        <h4>Fixed — <code>--download_refs</code> fetched the wrong GTF</h4>
+        <p>The annotation was chosen by excluding known variants, which always left <code>*.chr_patch_hapl_scaff.gtf.gz</code> — a patch/haplotype GTF that does not describe the <code>dna.primary_assembly</code> genome beside it. <strong>Re-download any reference set built before this release.</strong></p>
+      </div>
+      <div class="change">
+        <h4>Fixed — assembly-matched selection</h4>
+        <p>The GTF and transcriptome are now chosen by the assembly named in the genome FASTA. Anything that does not match exactly one file is a hard error, never a guess.</p>
+      </div>
+      <div class="change">
+        <h4>Fixed — Ensembl removed <code>pub/current_gtf/</code></h4>
+        <p>That alias now 404s, so <code>current</code> downloads found no annotation at all. <code>current</code> is resolved to a concrete release up front, and all three files come from one <code>release-&lt;N&gt;/</code> directory.</p>
+      </div>
+      <div class="change">
+        <h4>Fixed — no more silent partial reference sets</h4>
+        <p>A failed download used to exit 0 with whatever had arrived. <code>DOWNLOAD_REFS</code> now fails the run, and declares <code>fasta</code> and <code>gtf</code> as required outputs.</p>
+      </div>
+      <div class="change">
+        <h4>New — the transcriptome is downloaded</h4>
+        <p><code>*.cdna.all.fa.gz</code>, matched to the genome's assembly, exposed as a <code>transcript_fasta</code> output. <code>--download_refs</code> can finally feed <code>--build_indices</code> for Salmon and Kallisto.</p>
+      </div>
+      <div class="change">
+        <h4>New — integrity checks and provenance</h4>
+        <p>HTTPS with retries, a <code>Content-Length</code> check and a full gzip decode catch truncation. <code>download_log.txt</code> records the resolved release, the assembly, and the exact <code>--download_release</code> that reproduces the set.</p>
+      </div>
+      <div class="change">
+        <h4>Fixed — HISAT2 index build ran out of memory</h4>
+        <p><code>hisat2-build --ss --exon</code> needs ~200 GB for human but only requested 48 GB. Memory is now estimated from the GTF size (~204 GB human, 9 GB yeast), capped by <code>--max_memory</code>; below that it degrades to a non-splice-aware index rather than being OOM-killed. New <code>--hisat2_build_memory</code> override.</p>
+      </div>
+    </div>
+  </div>
+  <div class="pagemark"><span class="dot"></span>18 · Previously</div>
+</section>
+
+
+<!-- ============================================================
+  SLIDE 19 — PREVIOUS RELEASE 1.1.0
+============================================================ -->
+<section data-label="16 Previously — 1.1.0">
+  <div class="frame">
+    <p class="eyebrow">Release notes</p>
+    <h2 class="slide-title">Previously — 1.1.0</h2>
     <div class="release-head" style="margin-top: 18px;">
       <span class="release-tag">v1.1.0</span>
       <span class="release-date">25 May 2026</span>
@@ -1803,14 +1899,14 @@
       </div>
     </div>
   </div>
-  <div class="pagemark"><span class="dot"></span>17 · What's new</div>
+  <div class="pagemark"><span class="dot"></span>19 · Previous release</div>
 </section>
 
 
 <!-- ============================================================
-  SLIDE 18 — QUICK START
+  SLIDE 20 — QUICK START
 ============================================================ -->
-<section data-label="15 Quick start">
+<section data-label="17 Quick start">
   <div class="frame">
     <p class="eyebrow">Closing</p>
     <h2 class="slide-title">Quick start — four commands</h2>
@@ -1852,7 +1948,7 @@
       </div>
     </div>
   </div>
-  <div class="pagemark"><span class="dot"></span>18 · Quick start</div>
+  <div class="pagemark"><span class="dot"></span>20 · Quick start</div>
 </section>
 
 </deck-stage>

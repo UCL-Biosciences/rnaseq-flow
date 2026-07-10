@@ -191,6 +191,10 @@
           "type": "string",
           "format": "file-path",
           "description": "Genome FASTA for index building (STAR / HISAT2 / Salmon)."
+        },
+        "hisat2_build_memory": {
+          "type": "string",
+          "description": "Memory required to build a splice-aware HISAT2 index (e.g. '200.GB'). Default: estimated from the GTF size (~8.GB + 45.GB per GB of uncompressed GTF). If the memory actually granted is below this, HISAT2_BUILD drops --ss/--exon and builds a non-splice-aware index instead of running out of memory."
         }
       }
     },

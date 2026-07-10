@@ -12,6 +12,167 @@ No unreleased changes. Roadmap items are tracked in
 contamination / rRNA screening, a `--contrasts` parameter, an Arriba fusion
 caller and a bundled CI test profile.
 
+## [1.3.0] - 2026-07-08
+
+Nextflow 26 support. Nextflow's strict language parser — the default from
+Nextflow 25.10 and used by `nextflow lint` — rejected several constructs the
+pipeline relied on, so it would not run on current Nextflow. The config and
+scripts are migrated to the strict language and now pass `nextflow lint` with
+zero errors and zero warnings; the full workflow was verified end-to-end on
+Nextflow 26.04 (STAR, Salmon and reference-download paths).
+
+**Minimum Nextflow is now 25.10** (`nextflowVersion = '!>=25.10.0'`, was
+`22.10.1`). The strict-language constructs used here — `process.resourceLimits`,
+the entry-workflow `onComplete:` section, and no top-level script statements —
+require the new parser, which is the default from 25.10.
+
+### Changed
+
+- **Resource ceilings now use `process.resourceLimits`** (native, Nextflow
+  24.04+) instead of the `check_max()` helper. The strict config parser forbids
+  function definitions in a config file, so `check_max()` (and the
+  `hisat2_build_mem()` helper added in 1.2.0) could not be defined there.
+  `--max_cpus` / `--max_memory` / `--max_time` still cap every request exactly as
+  before; the HISAT2 index-build memory estimate is now an inline `ext`
+  closure in `conf/base.config`. No change to the resources any process requests.
+
+- **Entry-workflow `onComplete:` section.** The run-completion summary
+  (`pipeline_info/run_summary.html`) was written by a top-level
+  `workflow.onComplete { }` handler, which the strict parser does not allow. It
+  is now the entry workflow's `onComplete:` section; behaviour is unchanged
+  (verified: the summary is written on both success and failure).
+
+- **Trace-file timestamps are inlined.** The shared `def trace_timestamp`
+  variable is gone (the strict parser forbids config variable declarations); each
+  of the timeline / report / trace filenames computes the timestamp inline.
+
+### Fixed
+
+- **Top-level script statements moved into the workflow.** The schema-driven
+  `--help`, parameter typo-detection and required-input checks ran as top-level
+  statements in `main.nf`, which the strict parser rejects. They are now a
+  `checkParameters()` function called from the entry workflow's `main:` section.
+  `--help` and typo-detection behave exactly as before.
+
+- **Strict-syntax script cleanups.** Removed a `while` loop (no longer supported
+  — replaced with a range iterator), C-style multi-variable declarations, and
+  `;`-joined statements in the run-summary code; converted the run-summary
+  formatting closures to top-level functions (the strict parser does not resolve
+  a closure variable called from inside another closure).
+
+- **Deprecation warnings cleared.** `Channel.*` factory access → `channel.*`;
+  implicit closure parameters (`it`) → explicit parameters; unused closure
+  parameters prefixed with `_`; single workflow emit given as an unnamed
+  expression. `nextflow lint .` now reports no warnings.
+
+## [1.2.0] - 2026-07-08
+
+A reference-download and index-building release. `--download_refs` selected the
+wrong GTF and its "current release" path had stopped working against Ensembl;
+both are fixed, the workflow now fetches the transcriptome it was always missing,
+and the HISAT2 index build no longer runs out of memory on mammalian genomes.
+
+**Re-download your reference set.** Any run whose references came from
+`--download_refs` before this version used a patch/haplotype annotation
+(`*.chr_patch_hapl_scaff.gtf.gz`) against a primary-assembly genome, and should
+be regarded as provisional. See *Fixed* below for what that did and did not
+affect.
+
+### Fixed
+
+- **`--download_refs` downloaded the wrong GTF.** `assets/download_refs.py`
+  chose the annotation by *excluding* known variants. Ensembl lists them
+  alphabetically — `abinitio`, `chr`, `chr_patch_hapl_scaff`, then the canonical
+  file — so the first surviving candidate was always
+  `*.chr_patch_hapl_scaff.gtf.gz`, a patch/haplotype annotation that does not
+  describe the `dna.primary_assembly` genome downloaded alongside it. On Ensembl
+  release-116 human that GTF spans 528 contigs against the FASTA's 70 (458 with
+  no sequence at all), carries 86,411 gene records instead of 78,941, and raises
+  duplicated gene symbols from 484 to 3,384 (`HLA-A` appears 8× instead of
+  once). Gene `gene_id`s stay unique and the surplus genes receive no reads, so
+  gene-level counts were not themselves corrupted — but STAR's index disagreed
+  with its annotation, every annotation-derived table carried phantom genes, and
+  symbol-keyed steps saw colliding names.
+
+  The GTF and the transcriptome are now selected by **the assembly named in the
+  genome FASTA**, and anything that does not match exactly one file is a hard
+  error rather than a guess. Two simpler rules were tried and rejected: the
+  trailing number in a GTF filename is not always the Ensembl release
+  (release-116 ships `Saccharomyces_cerevisiae.R64-1-1.63.gtf.gz`), and a single
+  release directory can hold GTFs for more than one assembly (release-110 has
+  both `Drosophila_melanogaster.BDGP6.32.110.gtf.gz` and `...BDGP6.46.110.gtf.gz`
+  while the genome is `BDGP6.46`).
+
+- **`--download_refs` no longer works against `pub/current_gtf/`.** Ensembl has
+  removed that alias — it now returns 404 over both HTTP and HTTPS, although
+  `pub/current_fasta/` still resolves. A `current` download therefore failed to
+  find any annotation at all. `current` is now resolved to a concrete release
+  number up front (Ensembl REST `/info/data`, falling back to scraping `pub/`),
+  and the genome, GTF and transcriptome are all fetched from that same
+  `release-<N>/` directory.
+
+- **Partial reference sets were reported as success.** A failed or missing
+  download left `references/` holding whatever had arrived, and the process
+  exited 0. `download_refs.py` now exits non-zero unless all three files are
+  found, downloaded and verified, and `DOWNLOAD_REFS` declares `fasta` and `gtf`
+  as required rather than `optional` outputs.
+
+- **`--download_source ncbi` was a silent no-op**, producing a directory that
+  contained only a log file. It is now a hard error naming the supported
+  alternatives.
+
+- **`HISAT2_BUILD` ran out of memory on mammalian genomes.** A splice-aware
+  HISAT2 index (`hisat2-build --ss --exon`) needs on the order of 200 GB for
+  human, but the process only requested the 48 GB of the `process_high` label,
+  so the build was OOM-killed, retried once, and failed. It now requests memory
+  estimated from the GTF size — roughly `8.GB + 45.GB` per GB of uncompressed
+  annotation (about 204 GB for human, 158 GB for mouse, 9 GB for yeast), still
+  capped by `--max_memory`. When the granted memory is below what a splice-aware
+  build needs, `HISAT2_BUILD` now drops `--ss`/`--exon` and builds a
+  non-splice-aware index (with a clear warning) instead of being killed. A new
+  `--hisat2_build_memory` parameter overrides the estimate.
+
+### Added
+
+- **`--hisat2_build_memory` parameter.** Sets the memory a splice-aware HISAT2
+  index build is assumed to need (e.g. `200.GB`); default is estimated from the
+  GTF size. Doubles as the threshold below which the build degrades to a
+  non-splice-aware index.
+
+- **The reference download now fetches the transcriptome** (`*.cdna.all.fa.gz`,
+
+- **The reference download now fetches the transcriptome** (`*.cdna.all.fa.gz`,
+  matched to the genome's assembly, never the `cdna.abinitio` prediction set).
+  `--download_refs` previously produced no transcript FASTA at all, while
+  `--build_indices` hard-requires one for Salmon and Kallisto — the two helper
+  workflows could not feed each other. `DOWNLOAD_REFS` gained a matching
+  `transcript_fasta` output.
+
+  This is cDNA only. A total-RNA / rRNA-depleted library should also index the
+  Ensembl ncRNA FASTA, or lncRNAs go unquantified.
+
+- **Download integrity checking.** Every file is fetched over HTTPS with retries
+  and backoff, checked against the advertised `Content-Length`, and streamed
+  through a full gzip decode to catch truncation before the pipeline uses it.
+
+- **Reference provenance.** `references/download_log.txt` now records the
+  resolved Ensembl release, the assembly name, all three filenames, and the
+  exact `--download_release <N>` needed to reproduce the set — so a `current`
+  download stays interpretable after Ensembl moves on.
+
+### Changed
+
+- **`DOWNLOAD_REFS` output contract.** The `fasta` output glob is now anchored
+  on `.dna.` so the soft-masked (`dna_sm`) and repeat-masked (`dna_rm`) genome
+  variants can never be emitted in its place; `gtf` and `fasta` are no longer
+  `optional`; and the `stub` block uses realistic Ensembl filenames so the
+  output globs are actually exercised by `-stub-run`.
+
+- **Genome FASTA selection** prefers a whole-genome `dna.primary_assembly` file
+  and falls back to `dna.toplevel` only when the species publishes none — which
+  correctly handles Drosophila, whose `primary_assembly` files are per-chromosome
+  (`...dna.primary_assembly.2L.fa.gz`) rather than whole-genome.
+
 ## [1.1.0] - 2026-05-25
 
 ### Added

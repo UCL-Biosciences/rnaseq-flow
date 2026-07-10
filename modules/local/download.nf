@@ -13,11 +13,16 @@ process DOWNLOAD_REFS {
     path script
 
     output:
-    path "references/*"    , emit: files
-    path "references/*.fa.gz" , emit: fasta, optional: true // Might be unzipped? Script saves as .gz
-    path "references/*.gtf.gz", emit: gtf, optional: true
-    path "references/download_log.txt", emit: log
-    path "versions.yml"    , emit: versions
+    // download_refs.py exits non-zero unless all three reference files were
+    // fetched and verified, so genome/gtf/transcriptome are not optional.
+    // The genome glob anchors on '.dna.' so the soft- and repeat-masked
+    // variants (dna_sm / dna_rm) could never be confused for it.
+    path "references/*"                , emit: files
+    path "references/*.dna.*.fa.gz"    , emit: fasta
+    path "references/*.cdna.all.fa.gz" , emit: transcript_fasta
+    path "references/*.gtf.gz"         , emit: gtf
+    path "references/download_log.txt" , emit: log
+    path "versions.yml"                , emit: versions
 
     script:
     """
@@ -30,10 +35,13 @@ process DOWNLOAD_REFS {
     """
 
     stub:
+    // Names mirror the real Ensembl layout so the output globs above are
+    // actually exercised by -stub-run.
     """
     mkdir references
-    touch references/genome.fa.gz
-    touch references/annotation.gtf.gz
+    touch references/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+    touch references/Homo_sapiens.GRCh38.115.gtf.gz
+    touch references/Homo_sapiens.GRCh38.cdna.all.fa.gz
     touch references/download_log.txt
     touch versions.yml
     """
