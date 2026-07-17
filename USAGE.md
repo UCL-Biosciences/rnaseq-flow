@@ -54,8 +54,10 @@ aborts immediately with a clear message, instead of being silently ignored.
 
 ## 2. Mode 1 — Download references
 
-Fetches the genome FASTA and GTF annotation for any Ensembl species, and
-(optionally) MSigDB gene sets for GSEA.
+Fetches the genome FASTA, the GTF annotation and the cDNA transcriptome for any
+Ensembl species, and (optionally) MSigDB gene sets for GSEA. All three reference
+files are guaranteed to describe the same assembly — the download fails rather
+than mixing them.
 
 ```bash
 nextflow run main.nf \
@@ -77,7 +79,7 @@ nextflow run main.nf \
 | `--organism` | gProfiler-style organism ID; mapped to a scientific name for MSigDB |
 
 **Reproducibility — the versioned subfolder.** When `--download_release` is
-set, the genome FASTA + GTF are written to a `v<release>` subfolder *under*
+set, the reference files are written to a `v<release>` subfolder *under*
 `--outdir`, so each Ensembl build is kept separate. With
 `--outdir references/human --download_release 102` you get:
 
@@ -86,19 +88,31 @@ references/human/
 ├── v102/                                             # pinned Ensembl release 102
 │   ├── Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz   # genome FASTA
 │   ├── Homo_sapiens.GRCh38.102.gtf.gz                   # annotation (note the .102.)
-│   └── download_log.txt                                 # provenance log (records the release)
+│   ├── Homo_sapiens.GRCh38.cdna.all.fa.gz               # transcriptome (--transcript_fasta)
+│   └── download_log.txt                                 # provenance log
 └── gmt/                                              # if --download_gmt
     ├── hallmark.gmt
     ├── c2_curated.gmt   c2_kegg.gmt   c2_reactome.gmt
     └── c5_go.gmt        c5_go_bp.gmt
 ```
 
-Without `--download_release`, the latest release is downloaded straight into
-`--outdir` (no `v<release>` subfolder). The `download_log.txt` always records
-the exact release used.
+Without `--download_release`, the latest release is resolved and downloaded
+straight into `--outdir` (no `v<release>` subfolder). `download_log.txt` always
+records the resolved release, the assembly name, all three filenames and the
+exact `--download_release` value that reproduces the set — so a `current`
+download stays interpretable after Ensembl moves on.
 
-> For a transcript FASTA (needed for Salmon/Kallisto or isoform switching),
-> download the Ensembl `cdna.all.fa.gz` file for your species separately.
+> **Which GTF?** Ensembl publishes several annotations per species (`abinitio`,
+> `chr`, `chr_patch_hapl_scaff`, and the canonical one). Only the canonical GTF
+> describes the `dna.primary_assembly` genome; the others add patch scaffolds and
+> alternative haplotypes with no matching sequence. The pipeline selects the GTF
+> and the transcriptome by the assembly named in the genome FASTA, and fails
+> loudly rather than guessing. Reference sets downloaded with rnaseq-flow before
+> **v1.2.0** used the patch/haplotype GTF and should be re-downloaded.
+
+> **Total-RNA libraries.** Only the cDNA transcriptome is fetched. If your
+> library is rRNA-depleted rather than poly-A selected, also index Ensembl's
+> `ncrna.fa.gz` for that species, or lncRNAs go unquantified.
 
 ---
 

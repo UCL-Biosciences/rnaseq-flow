@@ -3,75 +3,80 @@
 nextflow.enable.dsl = 2
 
 /*
- * Parameter help (--help) and typo detection, driven by nextflow_schema.json.
- * The schema is loaded defensively: if it is missing or unreadable the pipeline
- * still runs, with help / parameter checking simply skipped.
- */
-def schema_json = null
-try {
-    schema_json = new groovy.json.JsonSlurper().parseText(
-        file("${projectDir}/nextflow_schema.json").text)
-} catch (Exception e) {
-    log.warn "Could not read nextflow_schema.json (${e.message}); --help and parameter checking disabled."
-}
-
-if (schema_json) {
-    def schema_groups = [:]   // group title -> [ param names ]
-    def schema_params = [:]   // param name  -> definition map
-    (schema_json['$defs'] ?: [:]).each { gkey, group ->
-        def names = []
-        (group['properties'] ?: [:]).each { pname, pdef ->
-            schema_params[pname] = pdef
-            names << pname
-        }
-        schema_groups[group['title'] ?: gkey] = names
-    }
-
-    if (schema_params.isEmpty()) {
-        log.warn "nextflow_schema.json defines no parameters; --help and parameter checking disabled."
-    }
-    else {
-        // --help : print the grouped parameter list and exit.
-        if (params.help) {
-            def sb = new StringBuilder("\nrnaseq-flow - pipeline parameters\n")
-            schema_groups.each { title, names ->
-                sb << "\n${title}\n"
-                names.each { pn ->
-                    def d   = schema_params[pn] ?: [:]
-                    def dft = d.containsKey('default') ? "  (default: ${d['default']})" : ""
-                    sb << String.format("  --%-18s %s%s%n", pn, (d['description'] ?: ''), dft)
-                }
-            }
-            sb << "\nExample:\n"
-            sb << "  nextflow run main.nf --input samplesheet.csv --aligner star --gtf genes.gtf -profile docker\n"
-            log.info sb.toString()
-            System.exit(0)
-        }
-
-        // Typo detection : any --parameter not declared in the schema is almost
-        // certainly a typo, and would otherwise be silently ignored.
-        def known   = schema_params.keySet() as Set
-        def unknown = params.keySet().findAll { !known.contains(it.toString()) }
-        if (unknown) {
-            error "Unknown parameter(s): " + unknown.collect { "--${it}" }.sort().join(', ') +
-                  "\nThis is usually a typo. Run 'nextflow run main.nf --help' for the valid parameter list."
-        }
-    }
-}
-
-/*
- * Workflow checks
- */
-if (params.input == null && !params.download_refs && !params.build_indices) {
-    error "Please specify an input samplesheet or glob pattern with --input"
-}
-
-/*
  * Import the main workflow
  */
 include { RNASEQ } from './workflows/rnaseq'
 include { DOWNLOAD } from './workflows/download'
 include { BUILD_INDICES } from './workflows/build_indices'
+
+/*
+ * Parameter help (--help), typo detection and required-input checks, driven by
+ * nextflow_schema.json. Called at the start of the entry workflow's main:
+ * section.
+ *
+ * Nextflow's strict script parser (default from 25.10 / 26.x) forbids top-level
+ * statements in a script, so this logic lives in a function rather than running
+ * at the top of the file. The schema is loaded defensively: if it is missing or
+ * unreadable the pipeline still runs, with help / parameter checking skipped.
+ */
+def checkParameters() {
+    def schema_json = null
+    try {
+        schema_json = new groovy.json.JsonSlurper().parseText(
+            file("${projectDir}/nextflow_schema.json").text)
+    } catch (Exception e) {
+        log.warn "Could not read nextflow_schema.json (${e.message}); --help and parameter checking disabled."
+    }
+
+    if (schema_json) {
+        def schema_groups = [:]   // group title -> [ param names ]
+        def schema_params = [:]   // param name  -> definition map
+        (schema_json['$defs'] ?: [:]).each { gkey, group ->
+            def names = []
+            (group['properties'] ?: [:]).each { pname, pdef ->
+                schema_params[pname] = pdef
+                names << pname
+            }
+            schema_groups[group['title'] ?: gkey] = names
+        }
+
+        if (schema_params.isEmpty()) {
+            log.warn "nextflow_schema.json defines no parameters; --help and parameter checking disabled."
+        }
+        else {
+            // --help : print the grouped parameter list and exit.
+            if (params.help) {
+                def sb = new StringBuilder("\nrnaseq-flow - pipeline parameters\n")
+                schema_groups.each { title, names ->
+                    sb << "\n${title}\n"
+                    names.each { pn ->
+                        def d   = schema_params[pn] ?: [:]
+                        def dft = d.containsKey('default') ? "  (default: ${d['default']})" : ""
+                        sb << String.format("  --%-18s %s%s%n", pn, (d['description'] ?: ''), dft)
+                    }
+                }
+                sb << "\nExample:\n"
+                sb << "  nextflow run main.nf --input samplesheet.csv --aligner star --gtf genes.gtf -profile docker\n"
+                log.info sb.toString()
+                System.exit(0)
+            }
+
+            // Typo detection : any --parameter not declared in the schema is
+            // almost certainly a typo, and would otherwise be silently ignored.
+            def known   = schema_params.keySet() as Set
+            def unknown = params.keySet().findAll { p -> !known.contains(p.toString()) }
+            if (unknown) {
+                error "Unknown parameter(s): " + unknown.collect { p -> "--${p}" }.sort().join(', ') +
+                      "\nThis is usually a typo. Run 'nextflow run main.nf --help' for the valid parameter list."
+            }
+        }
+    }
+
+    // Required-input check.
+    if (params.input == null && !params.download_refs && !params.build_indices) {
+        error "Please specify an input samplesheet or glob pattern with --input"
+    }
+}
 
 /*
  * Fail-fast samplesheet validation.
@@ -107,8 +112,8 @@ def validateSamplesheet(samplesheet_path) {
     }
     // --design covariate columns must exist; 'condition' must be in the design.
     if (params.design) {
-        def dvars = (params.design =~ /[A-Za-z_]\w*/).collect { it } as Set
-        dvars.findAll { it != 'condition' }.each { v ->
+        def dvars = (params.design =~ /[A-Za-z_]\w*/).collect { v -> v } as Set
+        dvars.findAll { d -> d != 'condition' }.each { v ->
             if (!cols.contains(v)) errors << "--design variable '${v}' is not a samplesheet column"
         }
         if (!dvars.contains('condition')) {
@@ -187,7 +192,7 @@ def validateSamplesheet(samplesheet_path) {
         warnings << "the 'batch' column has only ${batch_values.size()} level(s); it adds nothing to the model"
     }
 
-    warnings.each { log.warn "Samplesheet: ${it}" }
+    warnings.each { w -> log.warn "Samplesheet: ${w}" }
 
     if (errors) {
         error "Samplesheet validation failed (${errors.size()} problem(s)):\n  - " +
@@ -200,9 +205,55 @@ def validateSamplesheet(samplesheet_path) {
 }
 
 /*
+ * Run-summary formatting helpers, used by the entry workflow's onComplete:
+ * section. These are top-level functions rather than local closures because the
+ * strict parser (Nextflow 25.10 / 26.x) does not resolve a closure variable
+ * that is called from inside another closure (e.g. inside a .collect { } that
+ * builds the HTML), whereas a top-level function resolves everywhere.
+ */
+def esc(s) {
+    s == null ? '' : s.toString().replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+}
+def num(v) {
+    (v == null || !v.toString().trim().isNumber()) ? 0d : v.toString().trim().toDouble()
+}
+def fmtTime(ms) {
+    double t = ms as double
+    if (t <= 0) return '0s'
+    long s = Math.round(t / 1000d)
+    long h = s.intdiv(3600L)
+    long m = (s % 3600L).intdiv(60L)
+    long sec = s % 60L
+    def p = []
+    if (h)         p << "${h}h"
+    if (m)         p << "${m}m"
+    if (sec || !p) p << "${sec}s"
+    p.join(' ')
+}
+def fmtMem(b) {
+    double v = b as double
+    if (v <= 0) return '—'
+    def u = ['B', 'KB', 'MB', 'GB', 'TB']
+    int i = 0
+    // Range .each replaces a while loop (removed in the strict language); the
+    // guard makes the extra iterations no-ops once v has been scaled down.
+    (0..<4).each { _k ->
+        if (v >= 1024d) {
+            v /= 1024d
+            i += 1
+        }
+    }
+    i == 0 ? "${Math.round(v)} B" : String.format('%.1f %s', v, u[i])
+}
+
+/*
  * Main entry point
  */
 workflow {
+
+    main:
+    // Help / typo-detection / required-input checks (may print help and exit).
+    checkParameters()
 
     if (params.download_refs) {
         DOWNLOAD( params.download_species, params.download_source )
@@ -218,7 +269,7 @@ workflow {
             // Fail fast on a bad samplesheet before scheduling any work.
             validateSamplesheet( params.input )
 
-            Channel
+            channel
                 .fromPath(params.input)
                 .splitCsv(header: true)
                 .map { row ->
@@ -241,7 +292,7 @@ workflow {
                 .set { ch_reads }
         } else {
             // Fallback to original Glob pattern logic
-            Channel
+            channel
                 .fromFilePairs( params.input, size: params.input.count('*') > 1 ? 2 : 1 )
                 .ifEmpty { error "Cannot find any reads matching: ${params.input}" }
                 .map { name, reads ->
@@ -263,59 +314,40 @@ workflow {
         //
         RNASEQ ( ch_reads )
     }
-}
 
-/*
- * Run-completion summary.
- *
- * After every run (success or failure) this writes
- *   <outdir>/pipeline_info/run_summary.html
- * — a self-contained page that links the MultiQC report and the key result
- * directories, and tabulates job time, peak memory and CPU usage per process.
- * The per-process figures are aggregated from the Nextflow execution trace
- * (trace.raw = true, set in nextflow.config, keeps that file machine-readable).
- * A concise version is also printed to the console.
- */
-workflow.onComplete {
+    /*
+     * Run-completion summary.
+     *
+     * After every run (success or failure) this writes
+     *   <outdir>/pipeline_info/run_summary.html
+     * — a self-contained page that links the MultiQC report and the key result
+     * directories, and tabulates job time, peak memory and CPU usage per process.
+     * The per-process figures are aggregated from the Nextflow execution trace
+     * (trace.raw = true, set in nextflow.config, keeps that file machine-readable).
+     * A concise version is also printed to the console.
+     *
+     * This is the entry workflow's onComplete: section (Nextflow strict syntax);
+     * it replaces the former top-level `workflow.onComplete { }` handler, which
+     * the strict parser does not allow.
+     */
+    onComplete:
     try {
-        def esc = { s -> (s == null ? '' : s.toString())
-            .replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') }
-        def num = { v -> (v == null || !v.toString().trim().isNumber())
-            ? 0d : v.toString().trim().toDouble() }
-        def fmtTime = { ms ->
-            double t = ms as double
-            if (t <= 0) return '0s'
-            long s = Math.round(t / 1000d)
-            long h = s.intdiv(3600L), m = (s % 3600L).intdiv(60L), sec = s % 60L
-            def p = []
-            if (h)         p << "${h}h"
-            if (m)         p << "${m}m"
-            if (sec || !p) p << "${sec}s"
-            p.join(' ')
-        }
-        def fmtMem = { b ->
-            double v = b as double
-            if (v <= 0) return '—'
-            def u = ['B', 'KB', 'MB', 'GB', 'TB']
-            int i = 0
-            while (v >= 1024d && i < 4) { v /= 1024d; i++ }
-            i == 0 ? "${Math.round(v)} B" : String.format('%.1f %s', v, u[i])
-        }
-
         // --- aggregate per-process resources from the execution trace --------
         def traceHits = []
         try { traceHits = files("${params.tracedir}/execution_trace_*.txt") }
-        catch (ignored) { traceHits = [] }
-        def traceFile = traceHits ? traceHits.sort { it.name }.last() : null
+        catch (_ignored) { traceHits = [] }
+        def traceFile = traceHits ? traceHits.sort { a -> a.name }.last() : null
         def procStats = [:]
         boolean traceOk = false
         if (traceFile && traceFile.exists()) {
             def lines = traceFile.readLines()
             if (lines.size() > 1) {
                 traceOk = true
-                def hdr = (lines[0].split('\t') as List).collect { it.trim() }
-                int iName = hdr.indexOf('name'),     iStat = hdr.indexOf('status')
-                int iReal = hdr.indexOf('realtime'), iCpu  = hdr.indexOf('%cpu')
+                def hdr = (lines[0].split('\t') as List).collect { c -> c.trim() }
+                int iName = hdr.indexOf('name')
+                int iStat = hdr.indexOf('status')
+                int iReal = hdr.indexOf('realtime')
+                int iCpu  = hdr.indexOf('%cpu')
                 int iRss  = hdr.indexOf('peak_rss')
                 lines.drop(1).each { ln ->
                     def f = ln.split('\t')
@@ -331,18 +363,23 @@ workflow.onComplete {
                     st.tasks += 1
                     if (iReal >= 0 && iReal < f.size()) st.real += num(f[iReal])
                     if (iCpu >= 0 && iCpu < f.size()) {
-                        double c = num(f[iCpu]); if (c > 0) { st.cpuSum += c; st.cpuN += 1 }
+                        double c = num(f[iCpu])
+                        if (c > 0) {
+                            st.cpuSum += c
+                            st.cpuN += 1
+                        }
                     }
                     if (iRss >= 0 && iRss < f.size()) {
-                        double r = num(f[iRss]); if (r > st.rss) st.rss = r
+                        double r = num(f[iRss])
+                        if (r > st.rss) st.rss = r
                     }
                     if (iStat >= 0 && iStat < f.size() && f[iStat] == 'FAILED') st.failed += 1
                 }
             }
         }
-        def procRows = procStats.collect { k, v -> [name: k] + v }.sort { -it.real }
-        int    totTasks = (procRows.sum { it.tasks } ?: 0) as int
-        double totReal  = (procRows.sum { it.real } ?: 0d) as double
+        def procRows = procStats.collect { k, v -> [name: k] + v }.sort { r -> -r.real }
+        int    totTasks = (procRows.sum { r -> r.tasks } ?: 0) as int
+        double totReal  = (procRows.sum { r -> r.real } ?: 0d) as double
 
         // --- per-process resource table --------------------------------------
         def procTable
@@ -411,10 +448,10 @@ workflow.onComplete {
         // Nextflow's own detailed execution report (same folder as this file).
         def repHits = []
         try { repHits = files("${params.tracedir}/execution_report_*.html") }
-        catch (ignored) { repHits = [] }
+        catch (_ignored) { repHits = [] }
         def execLine = ''
         if (repHits) {
-            def rn = repHits.sort { it.name }.last().name
+            def rn = repHits.sort { a -> a.name }.last().name
             execLine = '<p class="note">Detailed Nextflow execution report: ' +
                 '<a href="' + esc(rn) + '">' + esc(rn) + '</a></p>'
         }
@@ -521,7 +558,7 @@ ${procTable}
         summaryFile.text = html
 
         // --- concise console summary -----------------------------------------
-        def heaviest = procRows.take(3).collect { "${it.name} (${fmtTime(it.real)})" }
+        def heaviest = procRows.take(3).collect { r -> "${r.name} (${fmtTime(r.real)})" }
         log.info(
             '\n' + ('-' * 66) + '\n' +
             " rnaseq-flow run ${ok ? 'COMPLETE' : 'FAILED'}  |  duration ${workflow.duration}\n" +

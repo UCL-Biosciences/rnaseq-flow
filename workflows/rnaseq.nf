@@ -50,15 +50,15 @@ workflow RNASEQ {
     ch_reads // channel: [ val(meta), [ reads ] ]
 
     main:
-    ch_versions = Channel.empty()
+    ch_versions = channel.empty()
 
     // Result directories fed to the Quarto analysis report. Each defaults to an
     // empty list and is reassigned to the real channel if that stage runs, so
     // the report renders whichever sections have data.
-    ch_quarto_deseq2    = Channel.value([])
-    ch_quarto_edger     = Channel.value([])
-    ch_quarto_gsea      = Channel.value([])
-    ch_quarto_gprofiler = Channel.value([])
+    ch_quarto_deseq2    = channel.value([])
+    ch_quarto_edger     = channel.value([])
+    ch_quarto_gsea      = channel.value([])
+    ch_quarto_gprofiler = channel.value([])
 
     // Define execution levels
     def run_level = 100 // Default: run all
@@ -84,26 +84,26 @@ workflow RNASEQ {
     //
     // MODULE: Alignment / Quantification (Level >= 2)
     //
-    ch_align_results = Channel.empty()
-    ch_bams          = Channel.empty()
+    ch_align_results = channel.empty()
+    ch_bams          = channel.empty()
 
     // Initialize downstream channels to empty in case skipped.
     // ch_multiqc_files is declared here (not later) so it can be safely
     // referenced from inside conditional blocks below.
-    ch_featurecounts_results = Channel.empty()  // count files -> DESeq2 / edgeR
-    ch_featurecounts_mqc     = Channel.empty()  // .summary files -> MultiQC
-    ch_featurecounts_exon    = Channel.empty()  // exon counts -> diffSplice
-    ch_rseqc_results         = Channel.empty()
-    ch_starfusion_results    = Channel.empty()
-    ch_multiqc_files         = Channel.empty()
-    ch_tx_quant              = Channel.empty()  // Salmon/Kallisto quant dirs -> tximport
+    ch_featurecounts_results = channel.empty()  // count files -> DESeq2 / edgeR
+    ch_featurecounts_mqc     = channel.empty()  // .summary files -> MultiQC
+    ch_featurecounts_exon    = channel.empty()  // exon counts -> diffSplice
+    ch_rseqc_results         = channel.empty()
+    ch_starfusion_results    = channel.empty()
+    ch_multiqc_files         = channel.empty()
+    ch_tx_quant              = channel.empty()  // Salmon/Kallisto quant dirs -> tximport
     
     if (run_level >= 2) {
         if (params.aligner == 'star') {
             if (!params.star_index) error "STAR index not provided via --star_index"
             STAR_ALIGN( FASTP.out.reads, file(params.star_index), file(params.gtf) ) 
             ch_versions = ch_versions.mix(STAR_ALIGN.out.versions.first())
-            ch_align_results = ch_align_results.mix(STAR_ALIGN.out.log_final.collect{ it[1] })
+            ch_align_results = ch_align_results.mix(STAR_ALIGN.out.log_final.collect { row -> row[1] })
             ch_bams = STAR_ALIGN.out.bam
             
             // STAR-Fusion (runs if Fusion is requested AND we are at Level 4+ OR just run it if CTAT provided? 
@@ -121,15 +121,15 @@ workflow RNASEQ {
             if (!params.hisat2_index) error "HISAT2 index not provided via --hisat2_index"
             HISAT2_ALIGN( FASTP.out.reads, file(params.hisat2_index) )
             ch_versions = ch_versions.mix(HISAT2_ALIGN.out.versions.first())
-            ch_align_results = ch_align_results.mix(HISAT2_ALIGN.out.summary.collect{ it[1] })
+            ch_align_results = ch_align_results.mix(HISAT2_ALIGN.out.summary.collect { row -> row[1] })
             ch_bams = HISAT2_ALIGN.out.bam
         }
         else if (params.aligner == 'salmon') {
             if (!params.salmon_index) error "Salmon index not provided via --salmon_index"
             SALMON_QUANT( FASTP.out.reads, file(params.salmon_index) )
             ch_versions = ch_versions.mix(SALMON_QUANT.out.versions.first())
-            ch_align_results = ch_align_results.mix(SALMON_QUANT.out.results.collect{ it[1] })
-            ch_tx_quant = SALMON_QUANT.out.results.collect{ it[1] }
+            ch_align_results = ch_align_results.mix(SALMON_QUANT.out.results.collect { row -> row[1] })
+            ch_tx_quant = SALMON_QUANT.out.results.collect { row -> row[1] }
             
             // Isoform Switch (Level 4+)
             if (run_level >= 4 && params.isoform_switch && params.transcript_fasta) {
@@ -137,7 +137,7 @@ workflow RNASEQ {
                     file(params.input),
                     file(params.transcript_fasta),
                     file(params.gtf),
-                    SALMON_QUANT.out.results.collect{ it[1] },
+                    SALMON_QUANT.out.results.collect { row -> row[1] },
                     file("${projectDir}/assets/isoform_switch.R")
                 )
                 ch_versions = ch_versions.mix(ISOFORM_SWITCH.out.versions)
@@ -152,14 +152,14 @@ workflow RNASEQ {
             }
             KALLISTO_QUANT( FASTP.out.reads, file(params.kallisto_index) )
             ch_versions = ch_versions.mix(KALLISTO_QUANT.out.versions.first())
-            ch_align_results = ch_align_results.mix(KALLISTO_QUANT.out.results.collect{ it[1] })
-            ch_tx_quant = KALLISTO_QUANT.out.results.collect{ it[1] }
+            ch_align_results = ch_align_results.mix(KALLISTO_QUANT.out.results.collect { row -> row[1] })
+            ch_tx_quant = KALLISTO_QUANT.out.results.collect { row -> row[1] }
         }
         
         //
         // Post Alignment QC / Processing (Star/Hisat)
         //
-        ch_bam_bai = Channel.empty()
+        ch_bam_bai = channel.empty()
         
         if (params.aligner == 'star' || params.aligner == 'hisat2') {
              SAMTOOLS_INDEX ( ch_bams )
@@ -173,9 +173,9 @@ workflow RNASEQ {
                  
                  RSEQC ( ch_bam_bai, GTF2BED.out.bed, file("${projectDir}/assets/parse_strandedness.py") )
                  ch_versions = ch_versions.mix(RSEQC.out.versions.first())
-                 ch_rseqc_results = ch_rseqc_results.mix(RSEQC.out.infer_experiment.collect{ it[1] })
-                 ch_rseqc_results = ch_rseqc_results.mix(RSEQC.out.read_distribution.collect{ it[1] })
-                 ch_rseqc_results = ch_rseqc_results.mix(RSEQC.out.genebody_coverage.collect{ it[1] })
+                 ch_rseqc_results = ch_rseqc_results.mix(RSEQC.out.infer_experiment.collect { row -> row[1] })
+                 ch_rseqc_results = ch_rseqc_results.mix(RSEQC.out.read_distribution.collect { row -> row[1] })
+                 ch_rseqc_results = ch_rseqc_results.mix(RSEQC.out.genebody_coverage.collect { row -> row[1] })
              }
              
              // BigWig
@@ -190,8 +190,8 @@ workflow RNASEQ {
                     // instead of flattening every element into one long list.
                     .collect(flat: false)
                     .map { rows ->
-                         def bams = rows.collect { it[0] }
-                         def bais = rows.collect { it[1] }
+                         def bams = rows.collect { row -> row[0] }
+                         def bais = rows.collect { row -> row[1] }
                          [ [ id:'all_samples', single_end: rows[0][2] ], bams, bais ]
                     }
                 RMATS ( file(params.input), ch_rmats_input, file(params.gtf), file("${projectDir}/assets/run_rmats.py") )
@@ -207,21 +207,21 @@ workflow RNASEQ {
                  // user-supplied --strandedness value applied to every sample.
                  ch_strand = (params.strandedness == 'auto')
                      ? RSEQC.out.strandedness.map { meta, txt -> [ meta, txt.text.trim() ] }
-                     : ch_bams.map { meta, bam -> [ meta, params.strandedness ] }
+                     : ch_bams.map { meta, _bam -> [ meta, params.strandedness ] }
 
                  ch_fc_input = ch_bams.join(ch_strand)
                      .map { meta, bam, strand -> [ meta, bam, gtf_file, strand ] }
 
                  FEATURECOUNTS ( ch_fc_input )
                  ch_versions = ch_versions.mix(FEATURECOUNTS.out.versions.first())
-                 ch_featurecounts_results = FEATURECOUNTS.out.counts.collect{ it[1] }
-                 ch_featurecounts_mqc     = FEATURECOUNTS.out.summary.collect{ it[1] }
+                 ch_featurecounts_results = FEATURECOUNTS.out.counts.collect { row -> row[1] }
+                 ch_featurecounts_mqc     = FEATURECOUNTS.out.summary.collect { row -> row[1] }
 
                  // Exon-level counts for the optional edgeR diffSplice test.
                  if (run_level >= 3 && params.diffsplice && params.input.endsWith('.csv')) {
                      FEATURECOUNTS_EXON ( ch_fc_input )
                      ch_versions = ch_versions.mix(FEATURECOUNTS_EXON.out.versions.first())
-                     ch_featurecounts_exon = FEATURECOUNTS_EXON.out.counts.collect{ it[1] }
+                     ch_featurecounts_exon = FEATURECOUNTS_EXON.out.counts.collect { row -> row[1] }
                  }
              }
         }
@@ -236,8 +236,8 @@ workflow RNASEQ {
     // aligners to run gene-level differential expression).
     //
     if (run_level >= 3 && params.input.endsWith('.csv')) {
-        ch_de_counts = Channel.empty()
-        ch_gene_info = Channel.empty()
+        ch_de_counts = channel.empty()
+        ch_gene_info = channel.empty()
         def run_de   = false
 
         // Gene-symbol / biotype table parsed once from the GTF; used to
@@ -350,13 +350,13 @@ workflow RNASEQ {
     //
     // MODULE: MultiQC (Always run)
     //
-    // ch_multiqc_files was initialised to Channel.empty() at the top of the
+    // ch_multiqc_files was initialised to channel.empty() at the top of the
     // workflow, so the conditional mixes below are always safe.
     if (run_level >= 1) {
-        ch_multiqc_files = ch_multiqc_files.mix(FASTQC.out.zip.collect{ it[1] })
-        ch_multiqc_files = ch_multiqc_files.mix(FASTQC.out.html.collect{ it[1] })
-        ch_multiqc_files = ch_multiqc_files.mix(FASTP.out.json.collect{ it[1] })
-        ch_multiqc_files = ch_multiqc_files.mix(FASTP.out.html.collect{ it[1] })
+        ch_multiqc_files = ch_multiqc_files.mix(FASTQC.out.zip.collect { row -> row[1] })
+        ch_multiqc_files = ch_multiqc_files.mix(FASTQC.out.html.collect { row -> row[1] })
+        ch_multiqc_files = ch_multiqc_files.mix(FASTP.out.json.collect { row -> row[1] })
+        ch_multiqc_files = ch_multiqc_files.mix(FASTP.out.html.collect { row -> row[1] })
     }
 
     ch_multiqc_files = ch_multiqc_files.mix(ch_align_results)
@@ -391,8 +391,8 @@ workflow RNASEQ {
         ch_quarto_gsea,
         ch_quarto_gprofiler
     )
-    ch_versions = ch_versions.mix(QUARTO_REPORT.out.versions)
-
+    // Single unnamed emit (the strict parser wants the name omitted when there
+    // is only one): the accumulated version channel, plus the reporting steps'.
     emit:
-    versions = ch_versions
+    ch_versions.mix(QUARTO_REPORT.out.versions)
 }

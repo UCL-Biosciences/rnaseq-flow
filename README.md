@@ -74,7 +74,7 @@ aligner indices, so you can go from nothing to results with three commands.
 
 ## Requirements
 
-- **Nextflow** `>=22.10.1` (`curl -s https://get.nextflow.io | bash`)
+- **Nextflow** `>=25.10.0` (`curl -s https://get.nextflow.io | bash`) — the pipeline uses the strict language (default parser from 25.10; verified on 26.04)
 - **Java** 11–21 (required by Nextflow)
 - A **container engine** — Docker *or* Singularity/Apptainer — or **Conda**.
   Every process declares its own container, so nothing else needs installing.
@@ -87,7 +87,7 @@ or `-profile conda`.
 ## Quick start
 
 ```bash
-# 1. Download a reference genome + annotation, pinned to an Ensembl release
+# 1. Download a reference genome, annotation + transcriptome, pinned to an Ensembl release
 nextflow run main.nf \
     --download_refs \
     --download_species homo_sapiens \
@@ -96,7 +96,7 @@ nextflow run main.nf \
     --organism hsapiens \
     --outdir references/human \
     -profile docker
-# genome FASTA + GTF land in references/human/v102/
+# genome FASTA, GTF and cDNA FASTA land in references/human/v102/
 
 # 2. Build the index for your chosen aligner
 nextflow run main.nf \
@@ -130,7 +130,7 @@ based on the flags you pass:
 
 | Flag | Workflow | Purpose |
 |---|---|---|
-| `--download_refs` | `DOWNLOAD` | Fetch genome FASTA + GTF (and optionally GMT gene sets) from Ensembl |
+| `--download_refs` | `DOWNLOAD` | Fetch genome FASTA + GTF + cDNA transcriptome (and optionally GMT gene sets) from Ensembl |
 | `--build_indices` | `BUILD_INDICES` | Build STAR / HISAT2 / Salmon / Kallisto indices from references |
 | *(neither; `--input` given)* | `RNASEQ` | The full analysis pipeline |
 
