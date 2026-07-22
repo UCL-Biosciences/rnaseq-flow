@@ -229,6 +229,11 @@
           "type": "boolean",
           "default": false,
           "description": "Display the parameter help message and exit."
+        },
+        "default_queue": {
+          "type": "string",
+          "default": "",
+          "description": "Default SGE queue to submit jobs to (used by conf/sge.config)."
         }
       }
     }
